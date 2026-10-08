@@ -84,6 +84,27 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(const bool with_gpu_emula
 
   if (!provider->vulkan_device_) {
     std::vector<VkPhysicalDevice> physical_devices_ordered = physical_devices;
+    // Hybrid laptops often list the integrated GPU first. Try a discrete GPU
+    // before an integrated, virtual or CPU device; the feature preferences
+    // below keep this order among equally scored devices.
+    auto device_type_rank = [&ifn](VkPhysicalDevice physical_device) {
+      VkPhysicalDeviceProperties properties;
+      ifn.vkGetPhysicalDeviceProperties(physical_device, &properties);
+      switch (properties.deviceType) {
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+          return 0;
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+          return 1;
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+          return 2;
+        default:
+          return 3;
+      }
+    };
+    std::stable_sort(physical_devices_ordered.begin(), physical_devices_ordered.end(),
+                     [&device_type_rank](VkPhysicalDevice a, VkPhysicalDevice b) {
+                       return device_type_rank(a) < device_type_rank(b);
+                     });
     bool prefer_geometry_shader = REXCVAR_GET(vulkan_prefer_geometry_shader);
     bool prefer_fragment_stores = REXCVAR_GET(vulkan_prefer_fragment_stores_and_atomics);
     bool prefer_vertex_stores = REXCVAR_GET(vulkan_prefer_vertex_pipeline_stores_and_atomics);
@@ -97,7 +118,7 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(const bool with_gpu_emula
       };
       std::vector<PhysicalDeviceScore> scored_devices;
       scored_devices.reserve(physical_devices.size());
-      for (const VkPhysicalDevice physical_device : physical_devices) {
+      for (const VkPhysicalDevice physical_device : physical_devices_ordered) {
         VkPhysicalDeviceFeatures supported_features = {};
         ifn.vkGetPhysicalDeviceFeatures(physical_device, &supported_features);
         uint32_t score = 0;
