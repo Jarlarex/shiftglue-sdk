@@ -2179,9 +2179,11 @@ bool Fh1NativeExecutor::NativeResolve(uint32_t& written_address, uint32_t& writt
   written_address = 0;
   written_length = 0;
   if (!initialized_) return false;
-  if (!Resolve(&written_address, &written_length)) return false;
+  xenos::ColorFormat written_format = xenos::ColorFormat::k_8_8_8_8;
+  if (!Resolve(&written_address, &written_length, &written_format)) return false;
   // At scale the resolve reads one-off captures back itself.
-  if (scale_ == 1 && written_length && IsOneOffResolve(written_address, written_length)) {
+  if (scale_ == 1 && written_length &&
+      IsOneOffResolve(written_address, written_length, written_format)) {
     QueueResolveReadback(written_address, written_length);
   }
   if (written_length && !REXCVAR_GET(fh1_resolve_dump_dir).empty() &&
@@ -2230,13 +2232,16 @@ void Fh1NativeExecutor::DumpResolveOutput(uint32_t address, uint32_t length) {
   dfn.vkFreeMemory(device, memory, nullptr);
 }
 
-bool Fh1NativeExecutor::IsOneOffResolve(uint32_t address, uint32_t length) {
+bool Fh1NativeExecutor::IsOneOffResolve(uint32_t address, uint32_t length,
+                                        xenos::ColorFormat format) {
   // As the D3D12 executor: the first frames of each run of resolves to a new,
-  // large range are read back (car thumbnails the game saves).
+  // large range are read back (car thumbnails the game saves). Runs are kept
+  // per destination format: a saved photo is resolved as 8888 over the range
+  // the depth buffer is resolved to every frame, and is a run of its own.
   constexpr uint64_t kRunGapFrames = 4, kRunReadbackFrames = 2, kIdleFrames = 300,
                      kNewFrames = 120;
   constexpr uint32_t kMinLength = 256 * 1024;
-  ResolveReadback& readback = resolve_readbacks_[(uint64_t(address) << 32) | length];
+  ResolveReadback& readback = resolve_readbacks_[{address, length, uint32_t(format)}];
   if (!readback.last_used_frame || frame_ > readback.last_used_frame + kRunGapFrames) {
     if (!readback.last_used_frame || frame_ > readback.last_used_frame + kIdleFrames) {
       readback.new_since_frame = frame_;
@@ -2323,7 +2328,8 @@ void LogResolvedRangeAccess(void*, uint32_t physical_address, uint32_t length, b
 }
 }  // namespace
 
-bool Fh1NativeExecutor::Resolve(uint32_t* written_address, uint32_t* written_length) {
+bool Fh1NativeExecutor::Resolve(uint32_t* written_address, uint32_t* written_length,
+                                xenos::ColorFormat* written_format) {
   const RegisterFile& regs = register_file_;
   CopyPlan plan;
   if (!PlanCopy(plan)) {
@@ -2453,7 +2459,9 @@ bool Fh1NativeExecutor::Resolve(uint32_t* written_address, uint32_t* written_len
     // One-off captures the CPU reads also need the guest layout at scale:
     // resolved again unscaled into the guest memory copy, from each guest
     // pixel's first host pixel, and read back.
-    if (scale_ > 1 && written_address && IsOneOffResolve(extent_start, extent_length)) {
+    if (scale_ > 1 && written_address &&
+        IsOneOffResolve(extent_start, extent_length,
+                        plan.info.copy_dest_info.copy_dest_format)) {
       config_.memory->RequestRange(extent_start, extent_length);
       config_.memory->Use(VulkanSharedMemory::Usage::kComputeWrite,
                           std::make_pair(extent_start, extent_length));
@@ -2495,6 +2503,7 @@ bool Fh1NativeExecutor::Resolve(uint32_t* written_address, uint32_t* written_len
     }
     if (written_address) *written_address = extent_start;
     if (written_length) *written_length = extent_length;
+    if (written_format) *written_format = plan.info.copy_dest_info.copy_dest_format;
     if (complete) {
       ++resolves_;
       Count(plan.sources.size() > 1 ? "resolve_multi_owner" : "resolve_single_owner");

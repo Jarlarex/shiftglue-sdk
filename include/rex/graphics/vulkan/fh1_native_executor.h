@@ -227,7 +227,10 @@ class Fh1NativeExecutor {
   void GetResolveSources(const SurfaceKey& resolve_key, int32_t x0, int32_t y0, int32_t x1,
                          int32_t y1, std::vector<SourceRect>& sources_out);
   bool PlanCopy(CopyPlan& plan);
-  bool Resolve(uint32_t* written_address, uint32_t* written_length);
+  // written_format: the destination format (a depth copy's is its depth
+  // texture format).
+  bool Resolve(uint32_t* written_address, uint32_t* written_length,
+               xenos::ColorFormat* written_format);
   // Resolves into `buffer` (the shared memory buffer, or at scale the
   // texture cache's scaled resolve buffer) bound from `memory_offset`.
   // unscaled_dest writes the guest layout from each guest pixel's first host
@@ -252,7 +255,7 @@ class Fh1NativeExecutor {
                          bool before_begin);
   // Surfaces with pending clears.
   uint32_t pending_clear_surfaces_ = 0;
-  bool IsOneOffResolve(uint32_t address, uint32_t length);
+  bool IsOneOffResolve(uint32_t address, uint32_t length, xenos::ColorFormat format);
   void QueueResolveReadback(uint32_t address, uint32_t length);
   void DumpResolveOutput(uint32_t address, uint32_t length);
 
@@ -322,7 +325,8 @@ class Fh1NativeExecutor {
 
   std::vector<PendingTransfer> pending_transfers_;
   std::vector<PendingReadback> pending_readbacks_;
-  std::map<uint64_t, ResolveReadback> resolve_readbacks_;
+  // By destination address, length and format.
+  std::map<std::tuple<uint32_t, uint32_t, uint32_t>, ResolveReadback> resolve_readbacks_;
 
   // Targets PrepareTargets derived for the draw BindTargets binds.
   bool pending_targets_valid_ = false;
