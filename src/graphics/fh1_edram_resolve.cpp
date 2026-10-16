@@ -128,6 +128,10 @@ bool Fh1PlanResolve(const RegisterFile& regs, const memory::Memory& memory,
         pack = 3;
         bpb_log2 = 3;
         break;
+      case xenos::TextureFormat::k_8:
+        pack = 5;
+        bpb_log2 = 0;
+        break;
       default:
         break;
     }
